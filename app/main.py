@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
+from app.api.routes_analytics import router as analytics_router
 from app.api.routes_chat import router as chat_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs" if settings.app_env != "production" else None,
     redoc_url=None,
     lifespan=lifespan,
@@ -39,10 +40,11 @@ if settings.cors_origins:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-API-Key"],
     )
 
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(chat_router)
+app.include_router(analytics_router)

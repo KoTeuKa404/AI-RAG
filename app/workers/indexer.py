@@ -9,7 +9,7 @@ from redis.exceptions import RedisError
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
-from app.services.document_indexer import mark_document_failed, index_document_from_bytes
+from app.services.document_indexer import index_document_from_bytes, mark_document_failed
 from app.services.indexing_queue import INDEXING_QUEUE_KEY, IndexingJob, raw_document_key
 
 settings = get_settings()

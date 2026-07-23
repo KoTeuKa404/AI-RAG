@@ -33,8 +33,9 @@ def _encode_sync(texts: list[str]) -> list[list[float]]:
         batch_size=32,
     )
     if vectors.ndim != 2 or vectors.shape[1] != settings.embedding_dimension:
+        actual_dimension = vectors.shape[1] if vectors.ndim == 2 else "unknown"
         raise EmbeddingDimensionError(
-            f"Embedding model returned dimension {vectors.shape[1] if vectors.ndim == 2 else 'unknown'}, "
+            f"Embedding model returned dimension {actual_dimension}, "
             f"expected {settings.embedding_dimension}"
         )
     return vectors.astype(float).tolist()

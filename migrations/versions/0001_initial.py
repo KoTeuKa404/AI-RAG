@@ -4,10 +4,11 @@ Revision ID: 0001_initial
 Revises:
 Create Date: 2026-06-10
 """
+
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
@@ -43,9 +44,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("workspace_id", "sha256", name="uq_documents_workspace_sha256"),
     )
     op.create_index("ix_documents_workspace_id", "documents", ["workspace_id"])
-    op.create_index(
-        "ix_documents_workspace_created", "documents", ["workspace_id", "created_at"]
-    )
+    op.create_index("ix_documents_workspace_created", "documents", ["workspace_id", "created_at"])
 
     op.create_table(
         "chunks",
@@ -60,9 +59,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_chunks_workspace_id", "chunks", ["workspace_id"])
-    op.create_index(
-        "ix_chunks_workspace_document", "chunks", ["workspace_id", "document_id"]
-    )
+    op.create_index("ix_chunks_workspace_document", "chunks", ["workspace_id", "document_id"])
     op.create_index(
         "ix_chunks_embedding_hnsw",
         "chunks",
@@ -92,9 +89,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_chat_logs_workspace_id", "chat_logs", ["workspace_id"])
-    op.create_index(
-        "ix_chat_logs_workspace_created", "chat_logs", ["workspace_id", "created_at"]
-    )
+    op.create_index("ix_chat_logs_workspace_created", "chat_logs", ["workspace_id", "created_at"])
 
 
 def downgrade() -> None:

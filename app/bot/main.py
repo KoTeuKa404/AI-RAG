@@ -244,7 +244,10 @@ async def _documents_view(
     )
     status_line = ""
     if processing_count or failed_count:
-        status_line = f"\n\nСтатус: готових {len(ready)}, обробляється {processing_count}, помилок {failed_count}."
+        status_line = (
+            f"\n\nСтатус: готових {len(ready)}, "
+            f"обробляється {processing_count}, помилок {failed_count}."
+        )
     text = f"{current}\n\nОберіть документ, у межах якого бот має шукати відповіді.{status_line}"
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -411,8 +414,7 @@ async def current_scope(message: Message) -> None:
         await message.answer("🌐 Зараз бот шукає по всіх документах.")
     else:
         await message.answer(
-            f"📄 Активний документ: {active.filename}\n"
-            "Щоб змінити його, використай /documents."
+            f"📄 Активний документ: {active.filename}\nЩоб змінити його, використай /documents."
         )
 
 
@@ -604,7 +606,11 @@ async def upload_document(message: Message, bot: Bot) -> None:
         payload = response.json()
         document_id = str(payload["id"])
         status_value = str(payload.get("status", "processing"))
-        ready_payload = payload if status_value == "ready" else await _wait_for_indexing(status_message, document_id)
+        ready_payload = (
+            payload
+            if status_value == "ready"
+            else await _wait_for_indexing(status_message, document_id)
+        )
 
         if ready_payload is None:
             await _safe_edit(
@@ -651,7 +657,9 @@ async def upload_document(message: Message, bot: Bot) -> None:
                     user.id,
                     ActiveDocument(
                         document_id=document_id,
-                        filename=str(payload.get("filename") or message.document.file_name or "document"),
+                        filename=str(
+                            payload.get("filename") or message.document.file_name or "document"
+                        ),
                     ),
                 )
                 await _safe_edit(
@@ -661,7 +669,10 @@ async def upload_document(message: Message, bot: Bot) -> None:
             else:
                 await _safe_edit(
                     status_message,
-                    f"ℹ️ Цей документ уже додано, але його статус: {payload.get('status', 'unknown')}.",
+                    (
+                        "ℹ️ Цей документ уже додано, але його статус: "
+                        f"{payload.get('status', 'unknown')}."
+                    ),
                 )
         else:
             await _safe_edit(status_message, f"ℹ️ Цей документ уже додано.\n{detail}")
@@ -691,9 +702,7 @@ async def ask_question(message: Message, bot: Bot) -> None:
         return
     active = await _get_active_document(user.id)
     scope_text = (
-        f"📄 Документ: {active.filename}"
-        if active is not None
-        else "🌐 Пошук по всіх документах"
+        f"📄 Документ: {active.filename}" if active is not None else "🌐 Пошук по всіх документах"
     )
     status_message = await message.answer(f"⏳ Обробляю запит…\n{scope_text}")
 
@@ -725,7 +734,9 @@ async def ask_question(message: Message, bot: Bot) -> None:
                     json=request_payload,
                 )
         except httpx.TimeoutException:
-            logger.exception("Backend chat request timed out after %.0f seconds", read_timeout_seconds)
+            logger.exception(
+                "Backend chat request timed out after %.0f seconds", read_timeout_seconds
+            )
             await _finish_progress(progress_task)
             await _safe_edit(
                 status_message,

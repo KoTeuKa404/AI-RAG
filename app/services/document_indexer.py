@@ -89,5 +89,7 @@ async def index_document_from_bytes(
     except Exception as exc:
         logger.exception("Document indexing failed for document %s", document_id)
         await session.rollback()
-        await mark_document_failed(session, document_id, workspace_id, str(exc) or "Indexing failed")
+        await mark_document_failed(
+            session, document_id, workspace_id, str(exc) or "Indexing failed"
+        )
         raise

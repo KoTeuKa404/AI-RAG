@@ -19,5 +19,17 @@ class SourceItem(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    chat_id: uuid.UUID
     answer: str
     sources: list[SourceItem]
+
+
+class ChatFeedbackRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+class ChatFeedbackResponse(BaseModel):
+    chat_id: uuid.UUID
+    rating: int
+    comment: str | None

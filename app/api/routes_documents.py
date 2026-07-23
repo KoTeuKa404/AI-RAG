@@ -3,16 +3,26 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from redis.exceptions import RedisError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import DbSession, WorkspaceId
+from app.api.deps import DbSession, PrincipalContext
+from app.core.auth import Principal, require_roles
 from app.core.config import get_settings
 from app.db.models import Document
-from app.schemas.documents import DocumentListResponse, DocumentResponse
+from app.schemas.documents import (
+    DocumentAccessUpdate,
+    DocumentListResponse,
+    DocumentResponse,
+)
+from app.services.access_control import (
+    can_access_document_values,
+    document_access_clause,
+)
 from app.services.document_indexer import index_document_from_bytes
 from app.services.file_validation import FileValidationError, validate_uploaded_file
 from app.services.indexing_queue import enqueue_document_indexing
@@ -39,15 +49,16 @@ async def _read_limited(upload: UploadFile, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-async def _get_workspace_document(
+async def _get_accessible_document(
     session: DbSession,
-    workspace_id: str,
+    principal: Principal,
     document_id: uuid.UUID,
 ) -> Document:
     document = await session.scalar(
         select(Document).where(
             Document.id == document_id,
-            Document.workspace_id == workspace_id,
+            Document.workspace_id == principal.workspace_id,
+            document_access_clause(principal),
         )
     )
     if document is None:
@@ -59,9 +70,10 @@ async def _get_workspace_document(
 async def upload_document(
     request: Request,
     session: DbSession,
-    workspace_id: WorkspaceId,
-    file: UploadFile = File(...),
+    principal: PrincipalContext,
+    file: Annotated[UploadFile, File()],
 ) -> DocumentResponse:
+    require_roles(principal, "owner", "admin", "editor")
     settings = get_settings()
     raw = await _read_limited(file, settings.max_upload_bytes)
 
@@ -77,22 +89,26 @@ async def upload_document(
     digest = hashlib.sha256(validated.data).hexdigest()
     existing = await session.scalar(
         select(Document).where(
-            Document.workspace_id == workspace_id,
+            Document.workspace_id == principal.workspace_id,
             Document.sha256 == digest,
         )
     )
     if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"This file already exists with document id {existing.id}",
-        )
+        if can_access_document_values(principal, existing.visibility, existing.allowed_groups):
+            detail = f"This file already exists with document id {existing.id}"
+        else:
+            detail = "This file already exists in the workspace"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
     document = Document(
-        workspace_id=workspace_id,
+        workspace_id=principal.workspace_id,
         filename=validated.filename,
         media_type=validated.media_type,
         sha256=digest,
         status="processing",
+        visibility="workspace",
+        allowed_groups=[],
+        created_by=principal.subject,
     )
     session.add(document)
     try:
@@ -110,7 +126,7 @@ async def upload_document(
             document = await index_document_from_bytes(
                 session,
                 document.id,
-                workspace_id,
+                principal.workspace_id,
                 validated.data,
                 validated.media_type,
             )
@@ -143,10 +159,16 @@ async def upload_document(
 
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(session: DbSession, workspace_id: WorkspaceId) -> DocumentListResponse:
+async def list_documents(
+    session: DbSession,
+    principal: PrincipalContext,
+) -> DocumentListResponse:
     statement = (
         select(Document)
-        .where(Document.workspace_id == workspace_id)
+        .where(
+            Document.workspace_id == principal.workspace_id,
+            document_access_clause(principal),
+        )
         .order_by(Document.created_at.desc())
         .limit(200)
     )
@@ -160,9 +182,33 @@ async def list_documents(session: DbSession, workspace_id: WorkspaceId) -> Docum
 async def get_document(
     document_id: uuid.UUID,
     session: DbSession,
-    workspace_id: WorkspaceId,
+    principal: PrincipalContext,
 ) -> DocumentResponse:
-    document = await _get_workspace_document(session, workspace_id, document_id)
+    document = await _get_accessible_document(session, principal, document_id)
+    return DocumentResponse.model_validate(document)
+
+
+@router.patch("/{document_id}/access", response_model=DocumentResponse)
+async def update_document_access(
+    document_id: uuid.UUID,
+    payload: DocumentAccessUpdate,
+    session: DbSession,
+    principal: PrincipalContext,
+) -> DocumentResponse:
+    require_roles(principal, "owner", "admin")
+    document = await session.scalar(
+        select(Document).where(
+            Document.id == document_id,
+            Document.workspace_id == principal.workspace_id,
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    document.visibility = payload.visibility
+    document.allowed_groups = payload.allowed_groups
+    await session.commit()
+    await session.refresh(document)
     return DocumentResponse.model_validate(document)
 
 
@@ -170,12 +216,14 @@ async def get_document(
 async def delete_document(
     document_id: uuid.UUID,
     session: DbSession,
-    workspace_id: WorkspaceId,
+    principal: PrincipalContext,
 ) -> None:
+    require_roles(principal, "owner", "admin", "editor")
     result = await session.execute(
         delete(Document).where(
             Document.id == document_id,
-            Document.workspace_id == workspace_id,
+            Document.workspace_id == principal.workspace_id,
+            document_access_clause(principal),
         )
     )
     if result.rowcount == 0:

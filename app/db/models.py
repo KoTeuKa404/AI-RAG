@@ -4,8 +4,19 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.config import get_settings
@@ -19,6 +30,10 @@ class Document(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "sha256", name="uq_documents_workspace_sha256"),
         Index("ix_documents_workspace_created", "workspace_id", "created_at"),
+        CheckConstraint(
+            "visibility IN ('workspace', 'restricted')",
+            name="ck_documents_visibility",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -31,6 +46,13 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    visibility: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="workspace", server_default="workspace"
+    )
+    allowed_groups: Mapped[list[str]] = mapped_column(
+        ARRAY(String(120)), nullable=False, default=list, server_default="{}"
+    )
+    created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -75,15 +97,25 @@ class Chunk(Base):
 
 class ChatLog(Base):
     __tablename__ = "chat_logs"
-    __table_args__ = (Index("ix_chat_logs_workspace_created", "workspace_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_chat_logs_workspace_created", "workspace_id", "created_at"),
+        Index("ix_chat_logs_workspace_actor", "workspace_id", "actor_id"),
+        CheckConstraint(
+            "feedback_rating IS NULL OR feedback_rating BETWEEN 1 AND 5",
+            name="ck_chat_logs_feedback_rating",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     workspace_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
-    sources: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False, default=list)
+    sources: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    feedback_rating: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    feedback_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

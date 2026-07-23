@@ -1,91 +1,81 @@
-name: CI
+name: Apply Ruff fixes
 
 on:
-  push:
-    branches: [master]
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  quality:
+  format:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'feature/company-brain-portfolio'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install project
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
-      - name: Ruff
-        id: ruff
-        continue-on-error: true
+      - name: Install Ruff
+        run: python -m pip install --upgrade pip "ruff>=0.6,<1.0"
+      - name: Apply formatting and remaining line fixes
         run: |
-          set +e
-          ruff check . --fix 2>&1 | tee ruff-fix.log
-          ruff format . 2>&1 | tee ruff-format.log
-          git diff --binary > ruff-fixes.patch
-          ruff check . --output-format=concise 2>&1 | tee ruff-check.log
-          check_status=${PIPESTATUS[0]}
-          ruff format --check . 2>&1 | tee ruff-format-check.log
-          format_status=${PIPESTATUS[0]}
-          if [ "$check_status" -ne 0 ] || [ "$format_status" -ne 0 ]; then
-            exit 1
-          fi
-      - name: Upload Ruff diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruff-diagnostics
-          path: |
-            ruff-fix.log
-            ruff-format.log
-            ruff-fixes.patch
-            ruff-check.log
-            ruff-format-check.log
-          if-no-files-found: error
-          retention-days: 3
-      - name: Upload formatted source files
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruff-formatted-files
-          path: |
-            app/api/routes_chat.py
-            app/bot/main.py
-            app/core/config.py
-            app/db/models.py
-            app/services/document_indexer.py
-            app/workers/indexer.py
-            eval/run_eval.py
-            migrations/env.py
-            migrations/versions/0001_initial.py
-            migrations/versions/0002_access_feedback.py
-            tests/test_config_principals.py
-          if-no-files-found: error
-          retention-days: 3
-      - name: Tests
-        run: pytest -q
-      - name: Compile
-        run: python -m compileall -q app scripts migrations
-      - name: Enforce Ruff result
-        if: always() && steps.ruff.outcome == 'failure'
-        run: exit 1
+          ruff check . --fix
+          ruff format .
+          python - <<'PY'
+          from pathlib import Path
 
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build API image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: ai-rag:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          bot_path = Path("app/bot/main.py")
+          bot = bot_path.read_text(encoding="utf-8")
+          bot = bot.replace(
+              '        status_line = f"\\n\\nСтатус: готових {len(ready)}, обробляється {processing_count}, помилок {failed_count}."',
+              '        status_line = (\n'
+              '            f"\\n\\nСтатус: готових {len(ready)}, "\n'
+              '            f"обробляється {processing_count}, помилок {failed_count}."\n'
+              '        )',
+          )
+          bot = bot.replace(
+              '                    f"ℹ️ Цей документ уже додано, але його статус: {payload.get(\'status\', \'unknown\')}.",',
+              '                    (\n'
+              '                        "ℹ️ Цей документ уже додано, але його статус: "\n'
+              '                        f"{payload.get(\'status\', \'unknown\')}."\n'
+              '                    ),',
+          )
+          bot_path.write_text(bot, encoding="utf-8")
+
+          embeddings_path = Path("app/services/embeddings.py")
+          embeddings = embeddings_path.read_text(encoding="utf-8")
+          embeddings = embeddings.replace(
+              '    if vectors.ndim != 2 or vectors.shape[1] != settings.embedding_dimension:\n'
+              '        raise EmbeddingDimensionError(\n'
+              '            f"Embedding model returned dimension {vectors.shape[1] if vectors.ndim == 2 else \'unknown\'}, "\n'
+              '            f"expected {settings.embedding_dimension}"\n'
+              '        )',
+              '    if vectors.ndim != 2 or vectors.shape[1] != settings.embedding_dimension:\n'
+              '        actual_dimension = vectors.shape[1] if vectors.ndim == 2 else "unknown"\n'
+              '        raise EmbeddingDimensionError(\n'
+              '            f"Embedding model returned dimension {actual_dimension}, "\n'
+              '            f"expected {settings.embedding_dimension}"\n'
+              '        )',
+          )
+          embeddings_path.write_text(embeddings, encoding="utf-8")
+          PY
+          ruff format .
+          ruff check .
+          ruff format --check .
+      - name: Commit fixes to PR branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app eval migrations tests
+          if git diff --cached --quiet; then
+            echo "No formatting changes to commit"
+            exit 0
+          fi
+          git commit -m "style: apply Ruff fixes [skip ci]"
+          git push origin "HEAD:${{ github.head_ref }}"

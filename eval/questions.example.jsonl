@@ -1,0 +1,2 @@
+{"question":"What is the refund period?","expected_source":"policy.pdf","expected_answer_contains":["refund"]}
+{"question":"Хто відповідає за підтримку сервісу?","expected_source":"runbook.docx","expected_answer_contains":["підтрим"]}

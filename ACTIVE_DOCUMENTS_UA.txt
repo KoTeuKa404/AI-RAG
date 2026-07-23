@@ -1,0 +1,41 @@
+ДОДАНО
+- /documents — список документів із кнопками
+- /current — поточний активний документ
+- /all — пошук по всій базі
+- після завантаження новий документ автоматично стає активним
+- POST /api/v1/chat тепер приймає необов'язковий document_id
+- бекенд перевіряє, що document_id належить поточному workspace
+- збережені попередні виправлення таймаутів і черги для локальної gpt-oss-20b
+
+ЗАМІНИ ФАЙЛИ
+app/schemas/chat.py
+app/api/routes_chat.py
+app/services/rag.py
+app/services/llm.py
+app/bot/main.py
+
+ЗАСТОСУВАННЯ БЕЗ ВАЖКОГО REBUILD
+У CMD:
+cd /d C:\Users\home\Desktop\ai-knowledge-assistant
+
+docker compose cp .\app\schemas\chat.py api:/app/app/schemas/chat.py
+docker compose cp .\app\api\routes_chat.py api:/app/app/api/routes_chat.py
+docker compose cp .\app\services\rag.py api:/app/app/services/rag.py
+docker compose cp .\app\services\llm.py api:/app/app/services/llm.py
+docker compose --profile bot cp .\app\bot\main.py bot:/app/app/bot/main.py
+
+docker compose restart api
+docker compose --profile bot restart bot
+
+docker compose logs --tail=100 api
+docker compose --profile bot logs --tail=100 bot
+
+ПЕРЕВІРКА
+1. У Telegram виконай /documents.
+2. Натисни потрібний PDF.
+3. Виконай /current.
+4. Постав запитання — джерела мають бути тільки з активного PDF.
+5. Виконай /all, щоб повернути пошук по всій базі.
+
+Примітка: вибір активного документа зберігається в пам'яті бота. Після рестарту
+бот безпечно повертається до режиму пошуку по всіх документах.

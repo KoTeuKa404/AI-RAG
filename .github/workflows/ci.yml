@@ -21,13 +21,34 @@ jobs:
       - name: Install project
         run: python -m pip install --upgrade pip && pip install -e ".[dev]"
       - name: Ruff
+        id: ruff
+        continue-on-error: true
         run: |
-          ruff check .
-          ruff format --check .
+          set +e
+          ruff check . --output-format=concise 2>&1 | tee ruff-check.log
+          check_status=${PIPESTATUS[0]}
+          ruff format --check . 2>&1 | tee ruff-format.log
+          format_status=${PIPESTATUS[0]}
+          if [ "$check_status" -ne 0 ] || [ "$format_status" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Ruff logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-logs
+          path: |
+            ruff-check.log
+            ruff-format.log
+          if-no-files-found: error
+          retention-days: 3
       - name: Tests
         run: pytest -q
       - name: Compile
         run: python -m compileall -q app scripts migrations
+      - name: Enforce Ruff result
+        if: always() && steps.ruff.outcome == 'failure'
+        run: exit 1
 
   docker:
     runs-on: ubuntu-latest

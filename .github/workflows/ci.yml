@@ -25,21 +25,27 @@ jobs:
         continue-on-error: true
         run: |
           set +e
+          ruff check . --fix 2>&1 | tee ruff-fix.log
+          ruff format . 2>&1 | tee ruff-format.log
+          git diff --binary > ruff-fixes.patch
           ruff check . --output-format=concise 2>&1 | tee ruff-check.log
           check_status=${PIPESTATUS[0]}
-          ruff format --check . 2>&1 | tee ruff-format.log
+          ruff format --check . 2>&1 | tee ruff-format-check.log
           format_status=${PIPESTATUS[0]}
           if [ "$check_status" -ne 0 ] || [ "$format_status" -ne 0 ]; then
             exit 1
           fi
-      - name: Upload Ruff logs
+      - name: Upload Ruff diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ruff-logs
+          name: ruff-diagnostics
           path: |
-            ruff-check.log
+            ruff-fix.log
             ruff-format.log
+            ruff-fixes.patch
+            ruff-check.log
+            ruff-format-check.log
           if-no-files-found: error
           retention-days: 3
       - name: Tests

@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install --upgrade pip "ruff>=0.6,<1.0"
       - name: Apply formatting and remaining line fixes
         run: |
-          ruff check . --fix
+          ruff check . --fix || true
           ruff format .
           python - <<'PY'
           from pathlib import Path

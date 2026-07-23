@@ -19,8 +19,7 @@ def _chat_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/chat/completions"
 
 
-# The local inference server should handle one expensive generation at a time.
-# This prevents Telegram and Swagger requests from overloading the same model.
+# A local inference server often handles one expensive generation most efficiently at a time.
 _LLM_REQUEST_LOCK = asyncio.Lock()
 
 
@@ -38,9 +37,11 @@ async def generate_answer(system_prompt: str, user_prompt: str) -> str:
         ],
         "temperature": settings.llm_temperature,
         "max_tokens": settings.llm_max_output_tokens,
-        "reasoning_effort": "low",
         "stream": False,
     }
+    # Many local OpenAI-compatible servers reject provider-specific fields.
+    if settings.llm_reasoning_effort.strip():
+        payload["reasoning_effort"] = settings.llm_reasoning_effort.strip()
 
     timeout = httpx.Timeout(
         connect=15.0,
@@ -59,15 +60,13 @@ async def generate_answer(system_prompt: str, user_prompt: str) -> str:
                 )
     except httpx.TimeoutException:
         logger.exception(
-            "Local LLM timed out after %.1f seconds",
+            "LLM timed out after %.1f seconds",
             settings.llm_timeout_seconds,
         )
         raise
     except httpx.RequestError:
-        logger.exception("Local LLM API is unavailable")
+        logger.exception("LLM API is unavailable")
         raise
-    except httpx.HTTPError as exc:
-        raise LLMError("The LLM request failed") from exc
 
     if response.status_code >= 400:
         logger.error("LLM returned HTTP %s: %s", response.status_code, response.text[:500])

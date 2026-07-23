@@ -1,264 +1,237 @@
 # AI Knowledge Assistant
 
-Production-oriented RAG portfolio project built with FastAPI, PostgreSQL + pgvector, Redis, a background indexing worker, local multilingual embeddings, an OpenAI-compatible LLM endpoint, hybrid retrieval, and an optional Telegram bot.
+A production-oriented multilingual RAG service for an internal company knowledge base. It combines FastAPI, PostgreSQL with pgvector, Redis-backed background indexing, local multilingual embeddings, OpenAI-compatible LLMs, document-level access control, feedback analytics, and an optional Telegram client.
 
-The application accepts PDF, DOCX, and UTF-8 TXT files, validates their content, creates document records, indexes them asynchronously, stores chunks and embeddings in PostgreSQL, retrieves relevant fragments, and asks an LLM to answer with source labels.
+Version `0.2.0` focuses on the features expected from a real internal AI product rather than a basic chat demo:
 
-For Ukrainian setup instructions, see `START_UA.md`. For the upgrade notes, see `docs/UPGRADE_UA.md`.
+- workspace isolation;
+- API identities with roles and groups;
+- restricted documents with group ACLs;
+- asynchronous document processing;
+- hybrid vector and keyword retrieval;
+- grounded answers with source labels;
+- per-answer feedback;
+- adoption and quality analytics;
+- secure environment generation;
+- automated CI and Docker build checks.
 
-## Main features
-
-- FastAPI REST API
-- PDF, DOCX, and TXT ingestion
-- Content-based file validation
-- Asynchronous document indexing through Redis + worker
-- `processing` / `ready` / `failed` document statuses
-- DOCX paragraph and table extraction
-- Local multilingual embeddings
-- PostgreSQL with pgvector and HNSW vector search
-- Hybrid retrieval: vector similarity + PostgreSQL full-text rank
-- OpenAI-compatible Chat Completions client
-- Support for OpenAI cloud, llama.cpp, LM Studio, Ollama-compatible gateways, and similar endpoints
-- Workspace isolation through API keys
-- Source metadata and page numbers
-- Prompt-injection-resistant RAG prompt
-- Redis-backed request rate limiting
-- Telegram bot with an allow-list
-- Telegram active-document state persisted in Redis
-- Alembic migrations
-- Docker Compose with `api`, `worker`, `postgres`, `redis`, and optional `bot`
-- Basic RAG eval script
-- Tests for chunking, file validation, DOCX table extraction, and queue payloads
+Ukrainian product notes are available in [`docs/COMPANY_BRAIN_UA.md`](docs/COMPANY_BRAIN_UA.md). Ukrainian startup instructions are in [`START_UA.md`](START_UA.md).
 
 ## Architecture
 
 ```text
-Telegram / REST client
+REST / Telegram client
           |
           v
-       FastAPI  ---- Redis rate limit
-          |
-          +---- Redis indexing queue + temporary raw upload bytes
-          |              |
-          |              v
-          |          Worker
-          |              |
-          v              v
-    PostgreSQL + pgvector chunks
+     API key identity
+  workspace + role + groups
           |
           v
-Hybrid retrieval: vector search + keyword rank
+       FastAPI  -------- Redis rate limit
+          |
+          +---- Redis indexing queue + temporary upload bytes
+          |                    |
+          |                    v
+          |                 Worker
+          |                    |
+          v                    v
+     PostgreSQL + pgvector + document ACLs
           |
           v
-OpenAI-compatible LLM
+ Hybrid vector + keyword retrieval
+          |
+          v
+ OpenAI-compatible LLM endpoint
+          |
+          +---- chat log + feedback + analytics
 ```
 
-Uploaded raw files are stored only temporarily in Redis while the worker indexes them. After indexing, the worker deletes the temporary raw bytes. PostgreSQL stores document metadata, extracted chunks, embeddings, and chat logs.
+Raw uploads are temporarily stored in Redis only while the worker indexes them. PostgreSQL stores document metadata, chunks, embeddings, chat logs, timings, actors, and feedback.
+
+## Main features
+
+### Document ingestion
+
+- PDF, DOCX, and UTF-8 TXT uploads;
+- content-based validation instead of trusting client MIME types;
+- upload and extracted-text limits;
+- DOCX paragraph and table extraction;
+- asynchronous Redis-backed indexing worker;
+- processing, ready, and failed statuses;
+- local multilingual embeddings;
+- HNSW vector index in PostgreSQL.
+
+### Retrieval and answers
+
+- workspace-scoped SQL queries;
+- document ACL predicate applied during retrieval;
+- vector similarity plus PostgreSQL full-text ranking;
+- optional search within one selected document;
+- source filenames, page numbers, excerpts, and similarity values;
+- prompt-injection-resistant source framing;
+- OpenAI-compatible Chat Completions client;
+- provider-specific `reasoning_effort` disabled by default for local API compatibility.
+
+### Corporate access control
+
+Each API key maps to an identity:
+
+```json
+{
+  "LONG_API_KEY": {
+    "workspace_id": "company-a",
+    "subject": "sales-user-1",
+    "role": "viewer",
+    "groups": ["sales"]
+  }
+}
+```
+
+Supported roles:
+
+| Role | Permissions |
+|---|---|
+| `owner` | Full workspace access |
+| `admin` | Document ACL management and analytics |
+| `editor` | Upload and delete accessible documents |
+| `viewer` | Read, chat, and rate own answers |
+
+For backward compatibility, the old mapping remains valid:
+
+```json
+{"LONG_API_KEY":"company-a"}
+```
+
+Legacy values are interpreted as owner identities, so existing local configurations continue to work.
+
+Documents can be:
+
+- `workspace` — visible to all identities in the workspace;
+- `restricted` — visible only to owner/admin identities or identities with a matching group.
+
+The ACL is enforced when listing, opening, deleting, selecting, and retrieving document chunks. Workspace IDs are never accepted from request bodies.
 
 ## Quick start
 
-### 1. Create the environment file
-
-The recommended method generates separate random API and database secrets:
+### 1. Generate a secure `.env`
 
 ```bash
 python scripts/init_env.py
 ```
 
-Alternatively, copy `.env.example` manually and generate strong random values. Put the API key into both API-key fields, and set a separate database password:
+The script creates separate random API and PostgreSQL secrets and refuses to overwrite an existing `.env` unless `--force` is explicitly supplied.
 
-```env
-POSTGRES_PASSWORD=YOUR_DATABASE_PASSWORD
-DATABASE_URL=postgresql+asyncpg://rag:YOUR_DATABASE_PASSWORD@postgres:5432/rag
-API_KEYS_JSON={"YOUR_LONG_RANDOM_KEY":"demo-workspace"}
-BACKEND_API_KEY=YOUR_LONG_RANDOM_KEY
-```
+Never commit `.env`.
 
-Do not commit `.env`.
+### 2. Configure an LLM
 
-### 2. Configure the LLM
-
-#### Local llama.cpp server
-
-The default configuration expects llama.cpp on the host machine:
+Local llama.cpp example:
 
 ```env
 LLM_BASE_URL=http://host.docker.internal:8080/v1
 LLM_API_KEY=local-not-secret
 LLM_MODEL=deepseek
+LLM_REASONING_EFFORT=
 ```
 
-Example llama.cpp command:
-
-```powershell
-llama-server.exe `
-  -m C:\Python\ai\models\deepseek-coder-6.7b-instruct.Q4_K_M.gguf `
-  --host 0.0.0.0 `
-  --port 8080 `
-  -ngl 35 `
-  -c 4096 `
-  --alias deepseek
-```
-
-Using `0.0.0.0` is required for Docker to reach the host service. Restrict the port with Windows Firewall so it is not exposed to untrusted networks.
-
-#### OpenAI cloud
+OpenAI-compatible cloud example:
 
 ```env
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=YOUR_PROVIDER_KEY
-LLM_MODEL=YOUR_CHAT_MODEL
+LLM_MODEL=YOUR_MODEL
 ```
 
-### 3. Start the API and worker
+`LLM_REASONING_EFFORT` is optional. Leave it empty unless the selected provider explicitly supports that request field.
+
+### 3. Start the stack
 
 ```bash
 docker compose up --build -d
 ```
 
-The first startup can take longer because the multilingual embedding model is downloaded into the Docker volume. The `worker` service shares the same Hugging Face cache volume as the API.
+The API is bound to localhost:
 
-Open API documentation in development mode:
+```text
+http://127.0.0.1:8000
+```
+
+Swagger is available in non-production mode:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
+The API container automatically applies Alembic migrations before startup.
+
 ### 4. Upload a document
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/documents" \
-  -H "X-API-Key: YOUR_LONG_RANDOM_KEY" \
-  -F "file=@example.pdf"
+  -H "X-API-Key: YOUR_EDITOR_OR_ADMIN_KEY" \
+  -F "file=@policy.pdf"
 ```
 
-The response usually returns `status: processing`. Check status:
+Poll its status:
 
 ```bash
 curl "http://127.0.0.1:8000/api/v1/documents/DOCUMENT_ID" \
-  -H "X-API-Key: YOUR_LONG_RANDOM_KEY"
+  -H "X-API-Key: YOUR_KEY"
 ```
 
-Ask questions only when the document status is `ready`.
+### 5. Restrict a document
 
-### 5. Ask a question
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/documents/DOCUMENT_ID/access" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_ADMIN_KEY" \
+  -d '{"visibility":"restricted","allowed_groups":["hr","management"]}'
+```
+
+### 6. Ask a question
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/chat" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_LONG_RANDOM_KEY" \
-  -d '{"question":"What does the document say about refunds?"}'
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"question":"What is the refund period?"}'
 ```
 
-To limit search to one document:
+The response includes a `chat_id`, answer, and sources.
+
+### 7. Save feedback
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/api/v1/chat" \
+curl -X PUT "http://127.0.0.1:8000/api/v1/chat/CHAT_ID/feedback" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_LONG_RANDOM_KEY" \
-  -d '{"question":"What does this file say?", "document_id":"DOCUMENT_ID"}'
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"rating":5,"comment":"Correct answer and source"}'
 ```
 
-### 6. List documents
+### 8. View business metrics
+
+Owner/admin only:
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/documents" \
-  -H "X-API-Key: YOUR_LONG_RANDOM_KEY"
+curl "http://127.0.0.1:8000/api/v1/analytics/summary?days=30" \
+  -H "X-API-Key: YOUR_ADMIN_KEY"
 ```
 
-## Telegram bot
-
-Create a bot token and set:
-
-```env
-TELEGRAM_BOT_TOKEN=...
-ALLOWED_TELEGRAM_USER_IDS=123456789
-```
-
-The allow-list is intentionally mandatory. An empty list prevents the bot from starting, which avoids accidentally exposing a paid LLM endpoint to everyone.
-
-Start the bot profile:
-
-```bash
-docker compose --profile bot up --build -d
-```
-
-The bot accepts supported documents, sends them to the API, waits for indexing to finish, and selects the ready document as active. Active document selection is stored in Redis, so it survives bot restarts.
-
-Useful commands:
-
-```text
-/documents — choose an active document
-/current — show current search mode
-/all — search across all ready documents
-/health — check API, PostgreSQL, and Redis
-```
-
-## Workspace isolation
-
-`API_KEYS_JSON` maps API keys to workspace IDs:
-
-```env
-API_KEYS_JSON={"key-for-team-a":"team-a","key-for-team-b":"team-b"}
-```
-
-Every document, chunk, retrieval query, deletion, and chat log is filtered by the authenticated workspace. A client cannot select its own workspace ID in a request body.
-
-Use long random keys. For a larger product, replace static API keys with user accounts, short-lived access tokens, and hashed credentials stored in the database.
-
-## Security decisions
-
-- The server validates file content instead of trusting only extensions or client MIME types.
-- File names are reduced to a basename and are never used as storage paths.
-- Upload and extracted-text limits reduce memory and cost abuse.
-- Raw files are stored temporarily in Redis only for async indexing and are deleted after worker success.
-- SQLAlchemy generates parameterized SQL.
-- Document text is treated as untrusted input in the LLM prompt.
-- The model is instructed not to obey commands found inside documents.
-- API keys are compared with constant-time comparison.
-- CORS is disabled by default.
-- Telegram access is denied by default.
-- Redis rate limiting fails closed by default.
-- Containers run as an unprivileged user with `no-new-privileges`.
-- Secrets stay in `.env`, which is ignored by Git.
-
-Important limitation: prompt-injection protection cannot be guaranteed by a prompt alone. High-risk actions should never be directly executable from retrieved documents. Add explicit authorization and human confirmation before integrating email, CRM changes, payments, or destructive tools.
-
-## Configuration
-
-Important variables:
-
-| Variable | Purpose |
-|---|---|
-| `API_KEYS_JSON` | API key to workspace mapping |
-| `DOCUMENT_INDEXING_MODE` | `async` for worker queue, `sync` for old inline indexing |
-| `DOCUMENT_RAW_TTL_SECONDS` | Temporary Redis TTL for raw bytes waiting for worker |
-| `LLM_BASE_URL` | OpenAI-compatible `/v1` base URL |
-| `LLM_MODEL` | Provider model or local alias |
-| `EMBEDDING_MODEL` | Sentence Transformers model |
-| `EMBEDDING_DIMENSION` | Must match the selected model |
-| `CHUNK_SIZE` | Approximate chunk size in characters |
-| `CHUNK_OVERLAP` | Repeated characters between chunks |
-| `RAG_TOP_K` | Maximum retrieved chunks |
-| `RAG_MIN_SIMILARITY` | Minimum cosine similarity unless keyword rank matches |
-| `RAG_HYBRID_SEARCH` | Enable vector + keyword retrieval |
-| `RAG_KEYWORD_WEIGHT` | Weight of full-text rank in hybrid ordering |
-| `RAG_CANDIDATE_MULTIPLIER` | Candidate pool multiplier before final top-k trim |
-| `MAX_UPLOAD_BYTES` | Upload memory limit |
-| `CHAT_RATE_LIMIT_PER_MINUTE` | Requests per workspace per minute |
-
-The default embedding model produces 384-dimensional vectors. Changing the model or vector dimension requires a database migration and rebuilding the document index.
+Metrics include document statuses, chat requests, unique API identities, average feedback rating, and feedback coverage.
 
 ## API endpoints
 
-| Method | Endpoint | Description |
+| Method | Endpoint | Access |
 |---|---|---|
-| `GET` | `/health` | Database and Redis health |
-| `POST` | `/api/v1/documents` | Upload a document and enqueue indexing |
-| `GET` | `/api/v1/documents` | List workspace documents |
-| `GET` | `/api/v1/documents/{id}` | Get document status |
-| `DELETE` | `/api/v1/documents/{id}` | Delete a workspace document |
-| `POST` | `/api/v1/chat` | Ask a RAG question |
+| `GET` | `/health` | Public service health |
+| `POST` | `/api/v1/documents` | owner/admin/editor |
+| `GET` | `/api/v1/documents` | authenticated + ACL |
+| `GET` | `/api/v1/documents/{id}` | authenticated + ACL |
+| `PATCH` | `/api/v1/documents/{id}/access` | owner/admin |
+| `DELETE` | `/api/v1/documents/{id}` | owner/admin/editor + ACL |
+| `POST` | `/api/v1/chat` | authenticated + ACL |
+| `PUT` | `/api/v1/chat/{id}/feedback` | answer owner or admin |
+| `GET` | `/api/v1/analytics/summary` | owner/admin |
 
 Protected endpoints require:
 
@@ -266,75 +239,100 @@ Protected endpoints require:
 X-API-Key: your-key
 ```
 
+## Telegram bot
+
+Set:
+
+```env
+TELEGRAM_BOT_TOKEN=...
+ALLOWED_TELEGRAM_USER_IDS=123456789
+BACKEND_API_KEY=AN_OWNER_OR_ADMIN_KEY
+```
+
+Start it with:
+
+```bash
+docker compose --profile bot up --build -d
+```
+
+The bot supports document upload, indexing status, active-document selection, all-document search, health checks, and Redis-persisted selection state.
+
 ## Evaluation
 
-Create or edit a JSONL file similar to `eval/questions.example.jsonl`, then run:
+Create a JSONL dataset based on `eval/questions.example.jsonl`, then run:
 
 ```bash
 python eval/run_eval.py \
-  --api-key YOUR_LONG_RANDOM_KEY \
+  --api-key YOUR_KEY \
   --base-url http://127.0.0.1:8000 \
   --file eval/questions.example.jsonl
 ```
 
-The script reports latency, source hit rate, expected terms hit rate, and citation rate. This is intentionally simple and suitable for a portfolio project; production evaluation should include larger datasets and human review.
+The evaluator reports latency, expected source hits, expected answer terms, and citation rate. Feedback analytics add a second signal based on real user ratings.
 
-## Development without Docker
+## Security decisions
 
-Create a virtual environment and install development dependencies:
+- API keys use constant-time comparison.
+- Production mode rejects placeholder API and database secrets.
+- Every protected data query includes workspace isolation.
+- Restricted-document ACLs are enforced in SQL retrieval, not only in the UI.
+- Duplicate upload errors do not reveal inaccessible restricted document IDs.
+- Upload content is validated against the extension.
+- File names are reduced to safe display basenames.
+- Raw files have a Redis TTL and are deleted after indexing.
+- Retrieved document text is explicitly treated as untrusted LLM input.
+- CORS is disabled by default.
+- Telegram access is denied by default.
+- Redis rate limiting fails closed by default.
+- Containers run as an unprivileged user with `no-new-privileges`.
+- CI has read-only repository permissions and does not require secrets.
+
+Prompt injection cannot be eliminated by prompting alone. Do not connect retrieved instructions directly to email, CRM, payment, or destructive tools without explicit authorization, parameter validation, and human approval.
+
+## Development
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
+# Windows: .venv\Scripts\activate
+# Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-You still need PostgreSQL with pgvector and Redis. Set `DATABASE_URL` and `REDIS_URL`, then run:
-
-```bash
-alembic upgrade head
-uvicorn app.main:app --reload
-```
-
-Run the worker in another terminal:
-
-```bash
-python -m app.workers.indexer
-```
-
-Tests:
-
-```bash
 pytest -q
-```
-
-Linting:
-
-```bash
 ruff check .
 ruff format --check .
 ```
 
+PostgreSQL with pgvector and Redis are required for integration testing. Apply migrations with:
+
+```bash
+alembic upgrade head
+```
+
+Run API and worker separately:
+
+```bash
+uvicorn app.main:app --reload
+python -m app.workers.indexer
+```
+
+## CI
+
+GitHub Actions runs:
+
+- Ruff linting;
+- Ruff formatting checks;
+- pytest;
+- Python bytecode compilation;
+- API Docker image build.
+
 ## Current limitations
 
-- Async indexing stores raw bytes temporarily in Redis. For larger production use, replace this with encrypted object storage.
-- DOCX does not provide reliable page numbers because the format is flow-based.
-- Scanned PDFs require a separate OCR pipeline.
-- Hybrid retrieval does not replace a proper reranker.
-- Chat history is logged but not inserted into the prompt.
-- API keys are static configuration rather than database-managed identities.
-- The LLM client uses Chat Completions for broad local-provider compatibility.
+- Static API keys are suitable for an internal demo but should be replaced with database-managed users, hashed credentials, and short-lived access tokens for a larger product.
+- Async indexing temporarily stores raw bytes in Redis; large-scale production should use encrypted object storage.
+- Scanned PDFs need an OCR pipeline.
+- DOCX page numbers are unavailable because DOCX is flow-based.
+- Hybrid retrieval does not replace a multilingual reranker.
+- The Telegram bot uses one configured backend identity rather than per-user corporate SSO.
 
-## Recommended next steps
+## Portfolio summary
 
-1. Add encrypted object storage for raw-file retention and reindexing.
-2. Add a multilingual cross-encoder reranker.
-3. Add larger evaluation datasets for retrieval recall and grounded answers.
-4. Add structured logging, OpenTelemetry, and metrics.
-5. Add a small React or server-rendered admin interface.
-6. Add role-based access and document-level ACLs.
-7. Add CI with tests, linting, and Docker build checks.
-
-## CV description
-
-> Developed a production-oriented multilingual RAG assistant using FastAPI, PostgreSQL with pgvector, Redis, Docker, local embeddings, an OpenAI-compatible LLM API, asynchronous document indexing, hybrid retrieval, source citations, Telegram integration, migrations, and automated tests.
+> Built a production-oriented corporate RAG assistant with FastAPI, PostgreSQL/pgvector, Redis workers, multilingual embeddings, hybrid retrieval, document-level group ACLs, role-based API identities, grounded source citations, Telegram integration, user feedback analytics, Alembic migrations, automated tests, and GitHub Actions CI.

@@ -5,10 +5,11 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_workspace_id
+from app.core.auth import Principal, get_principal, get_workspace_id
 from app.db.session import get_db
 from app.services.rate_limit import RateLimiter
 
+PrincipalContext = Annotated[Principal, Depends(get_principal)]
 WorkspaceId = Annotated[str, Depends(get_workspace_id)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

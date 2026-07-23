@@ -48,6 +48,25 @@ jobs:
             ruff-format-check.log
           if-no-files-found: error
           retention-days: 3
+      - name: Upload formatted source files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-formatted-files
+          path: |
+            app/api/routes_chat.py
+            app/bot/main.py
+            app/core/config.py
+            app/db/models.py
+            app/services/document_indexer.py
+            app/workers/indexer.py
+            eval/run_eval.py
+            migrations/env.py
+            migrations/versions/0001_initial.py
+            migrations/versions/0002_access_feedback.py
+            tests/test_config_principals.py
+          if-no-files-found: error
+          retention-days: 3
       - name: Tests
         run: pytest -q
       - name: Compile

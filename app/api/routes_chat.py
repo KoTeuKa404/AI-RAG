@@ -102,9 +102,7 @@ async def save_chat_feedback(
             ChatLog.workspace_id == principal.workspace_id,
         )
     )
-    if chat_log is None or (
-        not principal.is_admin and chat_log.actor_id != principal.subject
-    ):
+    if chat_log is None or (not principal.is_admin and chat_log.actor_id != principal.subject):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat entry not found")
 
     comment = payload.comment.strip() if payload.comment else None

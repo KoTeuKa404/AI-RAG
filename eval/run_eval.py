@@ -75,16 +75,25 @@ def main() -> None:
             if "[S" in answer:
                 citation_hits += 1
             if expected_source and isinstance(sources, list):
-                filenames = [str(source.get("filename", "")) for source in sources if isinstance(source, dict)]
+                filenames = [
+                    str(source.get("filename", ""))
+                    for source in sources
+                    if isinstance(source, dict)
+                ]
                 if any(str(expected_source) in filename for filename in filenames):
                     source_hits += 1
 
-            print(json.dumps({
-                "question": item["question"],
-                "latency_ms": round(elapsed_ms, 2),
-                "sources": len(sources) if isinstance(sources, list) else 0,
-                "answer_preview": answer[:160],
-            }, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "question": item["question"],
+                        "latency_ms": round(elapsed_ms, 2),
+                        "sources": len(sources) if isinstance(sources, list) else 0,
+                        "answer_preview": answer[:160],
+                    },
+                    ensure_ascii=False,
+                )
+            )
 
     total = len(questions)
     print("\nSummary")

@@ -1,6 +1,5 @@
 from app.core.config import Settings
 
-
 LEGACY_KEY = "k" * 32
 STRUCTURED_KEY = "s" * 32
 

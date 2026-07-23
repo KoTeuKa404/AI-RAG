@@ -166,9 +166,7 @@ class Settings(BaseSettings):
                 if item.strip()
             }
         except ValueError as exc:
-            raise ValueError(
-                "ALLOWED_TELEGRAM_USER_IDS must be comma-separated integers"
-            ) from exc
+            raise ValueError("ALLOWED_TELEGRAM_USER_IDS must be comma-separated integers") from exc
 
     @field_validator("chunk_overlap")
     @classmethod
